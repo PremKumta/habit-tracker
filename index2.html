@@ -71,21 +71,87 @@
     </div>
   </div>
 
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
+
   <script>
+    /** ------------------ Firebase Config ------------------ **/
+    const firebaseConfig = {
+      apiKey: "AIzaSyDDkdy2Dz0s7LHSWKgBLpevPFn0FDwt9os",
+      authDomain: "habit-tracker-pk.firebaseapp.com",
+      projectId: "habit-tracker-pk",
+      storageBucket: "habit-tracker-pk.appspot.com", // corrected domain
+      messagingSenderId: "790945841915",
+      appId: "1:790945841915:web:d9d21446d294a86d46a65e",
+      measurementId: "G-8JTCS6ZKW2"
+    };
+
+    // Init Firebase
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const auth = firebase.auth();
+
+    /** ------------------ App State ------------------ **/
     let habits = [];
     let currentWeekOffset = 0;
     let currentWeekDates = [];
     let currentMode = 'kid';
+    let userId = null;
+    let unsubscribe = null;
 
-    document.addEventListener('DOMContentLoaded', () => {
-      loadHabitsLocal();
-      updateWeekInfo();
-      renderHabits();
-      document.getElementById('habitInput').addEventListener('keypress', e=>{
-        if (e.key==='Enter' && currentMode==='kid') addHabit();
-      });
+    /** ------------------ Auth: Anonymous ------------------ **/
+    // Ensure Anonymous is enabled in Console → Authentication → Sign-in method
+    auth.onAuthStateChanged(user => {
+      if (user) {
+        userId = user.uid;
+        startRealtimeSync();
+      } else {
+        // If not signed in, sign in anonymously
+        auth.signInAnonymously().catch(err => {
+          console.error("Anonymous sign-in error:", err);
+          // Fallback to local only
+          loadHabitsLocal();
+          renderHabits();
+        });
+      }
     });
 
+    /** ------------------ Realtime Firestore Sync ------------------ **/
+    function startRealtimeSync(){
+      if (!userId) return;
+      // Clean previous listener
+      if (unsubscribe) unsubscribe();
+
+      unsubscribe = db.collection("users").doc(userId).collection("habits")
+        .onSnapshot(
+          (snap) => {
+            habits = [];
+            snap.forEach(doc => habits.push({ id: doc.id, ...doc.data() }));
+            renderHabits();
+          },
+          (err) => {
+            console.error("Sync error:", err);
+            loadHabitsLocal();
+            renderHabits();
+          }
+        );
+    }
+
+    /** ------------------ Local Storage Fallback ------------------ **/
+    function saveHabitsLocal(){ localStorage.setItem('family_habits', JSON.stringify(habits)); }
+    function loadHabitsLocal(){ habits = JSON.parse(localStorage.getItem('family_habits') || '[]'); }
+
+    /** ------------------ Date / Week Helpers ------------------ **/
+    function getWeekDates(offset=0){
+      const now = new Date(); now.setDate(now.getDate() + offset*7);
+      const start = new Date(now); start.setDate(now.getDate() - now.getDay()); // Sunday start
+      return Array.from({length:7}, (_,i) => { const d = new Date(start); d.setDate(start.getDate()+i); return d; });
+    }
+    function getDateKey(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+
+    /** ------------------ UI Mode / Nav ------------------ **/
     function setMode(mode){
       currentMode = mode;
       document.getElementById('kidMode').classList.toggle('active', mode==='kid');
@@ -94,99 +160,155 @@
       document.getElementById('clearBtn').classList.toggle('parent-mode', mode==='parent');
       renderHabits();
     }
-
-    function getWeekDates(offset=0){
-      const now=new Date(); now.setDate(now.getDate()+offset*7);
-      const start=new Date(now); start.setDate(now.getDate()-now.getDay());
-      return Array.from({length:7},(_,i)=>{let d=new Date(start);d.setDate(start.getDate()+i);return d;});
-    }
     function updateWeekInfo(){
-      currentWeekDates=getWeekDates(currentWeekOffset);
-      const s=currentWeekDates[0], e=currentWeekDates[6];
-      const m=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      document.getElementById('weekInfo').textContent=`${m[s.getMonth()]} ${s.getDate()} - ${m[e.getMonth()]} ${e.getDate()}, ${e.getFullYear()}`;
-      document.getElementById('nextWeekBtn').disabled=currentWeekOffset>=0;
+      currentWeekDates = getWeekDates(currentWeekOffset);
+      const s = currentWeekDates[0], e = currentWeekDates[6];
+      const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      document.getElementById('weekInfo').textContent = `${m[s.getMonth()]} ${s.getDate()} - ${m[e.getMonth()]} ${e.getDate()}, ${e.getFullYear()}`;
+      document.getElementById('nextWeekBtn').disabled = currentWeekOffset >= 0;
     }
-    function changeWeek(d){currentWeekOffset+=d;updateWeekInfo();renderHabits();}
-    function getDateKey(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+    function changeWeek(d){ currentWeekOffset += d; updateWeekInfo(); renderHabits(); }
 
-    function addHabit(){
-      if(currentMode==='parent') return;
-      const input=document.getElementById('habitInput');
-      const text=input.value.trim();
-      if(!text){input.style.animation='shake .4s';setTimeout(()=>input.style.animation='',400);return;}
-      const habit={id:Date.now(),name:text,completions:{},createdAt:new Date().toISOString()};
-      habits.unshift(habit);
-      saveHabitsLocal();renderHabits();input.value='';input.focus();
-    }
-    function toggleDay(id,key){
-      if(currentMode==='parent') return;
-      const h=habits.find(h=>h.id==id); if(!h) return;
-      h.completions[key] ? delete h.completions[key] : h.completions[key]=true;
-      saveHabitsLocal();renderHabits();
-    }
-    function deleteHabit(id){
-      if(currentMode==='parent') return;
-      if(!confirm('Delete this habit?')) return;
-      habits=habits.filter(h=>h.id!=id);
-      saveHabitsLocal();renderHabits();
-    }
-    function clearAllHabits(){
-      if(currentMode==='parent') return;
-      if(!confirm('Clear ALL habits?')) return;
-      habits=[];saveHabitsLocal();renderHabits();
+    /** ------------------ CRUD (Cloud first, local fallback) ------------------ **/
+    async function addHabit(){
+      if (currentMode === 'parent') return;
+      const input = document.getElementById('habitInput');
+      const text = input.value.trim();
+      if (!text){ input.style.animation='shake .4s'; setTimeout(()=>input.style.animation='',400); return; }
+
+      const habit = { name: text, completions: {}, createdAt: new Date().toISOString() };
+
+      if (userId){
+        try { await db.collection("users").doc(userId).collection("habits").add(habit); }
+        catch (err) { console.error("Add error:", err); } // rely on realtime sync or manual fallback if needed
+      } else {
+        habit.id = Date.now();
+        habits.unshift(habit);
+        saveHabitsLocal();
+        renderHabits();
+      }
+
+      input.value = '';
     }
 
-    function saveHabitsLocal(){localStorage.setItem('family_habits',JSON.stringify(habits));}
-    function loadHabitsLocal(){habits=JSON.parse(localStorage.getItem('family_habits')||'[]');}
+    async function toggleDay(id, key){
+      if (currentMode === 'parent') return;
 
+      if (userId){
+        try{
+          const ref = db.collection("users").doc(userId).collection("habits").doc(id);
+          const snap = await ref.get(); if (!snap.exists) return;
+          const comps = snap.data().completions || {};
+          comps[key] ? delete comps[key] : comps[key] = true;
+          await ref.update({ completions: comps });
+        } catch (err){ console.error("Toggle error:", err); }
+      } else {
+        const h = habits.find(h => h.id == id); if (!h) return;
+        h.completions[key] ? delete h.completions[key] : h.completions[key] = true;
+        saveHabitsLocal(); renderHabits();
+      }
+    }
+
+    async function deleteHabit(id){
+      if (currentMode === 'parent') return;
+      if (!confirm("Delete this habit?")) return;
+
+      if (userId){
+        try { await db.collection("users").doc(userId).collection("habits").doc(id).delete(); }
+        catch (err){ console.error("Delete error:", err); }
+      } else {
+        habits = habits.filter(h => h.id != id);
+        saveHabitsLocal(); renderHabits();
+      }
+    }
+
+    async function clearAllHabits(){
+      if (currentMode === 'parent') return;
+      if (!confirm("Clear ALL habits?")) return;
+
+      if (userId){
+        try{
+          const snap = await db.collection("users").doc(userId).collection("habits").get();
+          const batch = db.batch();
+          snap.forEach(doc => batch.delete(doc.ref));
+          await batch.commit();
+        } catch (err){ console.error("Clear error:", err); }
+      } else {
+        habits = [];
+        saveHabitsLocal(); renderHabits();
+      }
+    }
+
+    /** ------------------ Render ------------------ **/
     function renderHabits(){
-      const grid=document.getElementById('habitsGrid'); grid.innerHTML='';
-      if(!habits.length){grid.innerHTML=`<div class="empty-state">📋 No habits yet. Add one above!</div>`;
-        document.getElementById('clearBtn').style.display='none';updateStats();return;}
-      document.getElementById('clearBtn').style.display='block';
-      const dayNames=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-      habits.forEach(h=>{
-        const card=document.createElement('div'); card.className='habit-item';
-        card.innerHTML=`<div class="habit-header">
-          <div class="habit-name">🌟 ${h.name}</div>
-          <button class="delete-habit-btn${currentMode==='parent'?' parent-mode':''}">Delete</button></div>`;
-        const days=document.createElement('div'); days.className='days-grid';
-        currentWeekDates.forEach(d=>{
-          const key=getDateKey(d);
-          const box=document.createElement('div');
-          box.className='day-box'+(h.completions[key]?' completed':'')+(currentMode==='parent'?' parent-mode':'');
-          box.innerHTML=`<div>${dayNames[d.getDay()]}</div><div>${d.getMonth()+1}/${d.getDate()}</div>`;
-          box.onclick=()=>toggleDay(h.id,key);
+      const grid = document.getElementById('habitsGrid'); grid.innerHTML = '';
+      if (!habits.length){
+        grid.innerHTML = `<div class="empty-state">📋 No habits yet. Add one above!</div>`;
+        document.getElementById('clearBtn').style.display = 'none';
+        updateStats(); return;
+      }
+
+      document.getElementById('clearBtn').style.display = 'block';
+      const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+      habits.forEach(h => {
+        const card = document.createElement('div'); card.className = 'habit-item';
+        card.innerHTML = `
+          <div class="habit-header">
+            <div class="habit-name">🌟 ${h.name}</div>
+            <button class="delete-habit-btn${currentMode==='parent'?' parent-mode':''}">Delete</button>
+          </div>
+        `;
+        const days = document.createElement('div'); days.className = 'days-grid';
+        currentWeekDates.forEach(d => {
+          const key = getDateKey(d);
+          const box = document.createElement('div');
+          box.className = 'day-box' +
+            (h.completions && h.completions[key] ? ' completed' : '') +
+            (currentMode === 'parent' ? ' parent-mode' : '');
+          box.innerHTML = `<div>${dayNames[d.getDay()]}</div><div>${d.getMonth()+1}/${d.getDate()}</div>`;
+          box.onclick = () => toggleDay(h.id, key);
           days.appendChild(box);
         });
         card.appendChild(days);
-        card.querySelector('.delete-habit-btn').onclick=()=>deleteHabit(h.id);
+        card.querySelector('.delete-habit-btn').onclick = () => deleteHabit(h.id);
         grid.appendChild(card);
       });
+
       updateStats();
     }
 
+    /** ------------------ Stats ------------------ **/
     function updateStats(){
-      document.getElementById('totalHabits').textContent=habits.length;
-      document.getElementById('weeklyCompletions').textContent=getWeeklyCompletions();
-      document.getElementById('overallRate').textContent=getOverallRate();
+      document.getElementById('totalHabits').textContent = habits.length;
+      document.getElementById('weeklyCompletions').textContent = getWeeklyCompletions();
+      document.getElementById('overallRate').textContent = getOverallRate();
     }
     function getWeeklyCompletions(){
-      const weekKeys=currentWeekDates.map(getDateKey);
-      return habits.reduce((t,h)=>t+weekKeys.filter(k=>h.completions&&h.completions[k]).length,0);
+      const weekKeys = currentWeekDates.map(getDateKey);
+      return habits.reduce((t,h) => t + weekKeys.filter(k => h.completions && h.completions[k]).length, 0);
     }
     function getOverallRate(){
-      let done=0,possible=0;
-      habits.forEach(h=>{
-        done+=Object.keys(h.completions||{}).length;
-        if(h.createdAt){
-          const s=new Date(h.createdAt), today=new Date();today.setHours(0,0,0,0);
-          possible+=Math.max(1,Math.floor((today-s)/(1000*60*60*24))+1);
+      let done = 0, possible = 0;
+      habits.forEach(h => {
+        done += Object.keys(h.completions || {}).length;
+        if (h.createdAt){
+          const s = new Date(h.createdAt), today = new Date(); today.setHours(0,0,0,0);
+          possible += Math.max(1, Math.floor((today - s)/(1000*60*60*24)) + 1);
         }
       });
-      return possible?Math.round(done/possible*100):0;
+      return possible ? Math.round(done/possible*100) : 0;
     }
+
+    /** ------------------ Boot ------------------ **/
+    document.addEventListener('DOMContentLoaded', () => {
+      updateWeekInfo();
+      // If auth hasn’t fired yet, show local until it does (prevents blank UI on slow networks)
+      if (!userId) { loadHabitsLocal(); renderHabits(); }
+    });
+
+    // Clean up listener on page unload
+    window.addEventListener('beforeunload', () => { if (unsubscribe) unsubscribe(); });
   </script>
 </body>
 </html>
