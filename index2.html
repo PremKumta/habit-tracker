@@ -696,12 +696,15 @@
         }
 
         function updateConnectionStatus(status, text) {
-            const statusEl = document.getElementById('connectionStatus');
-            const statusText = document.getElementById('statusText');
-            
-            statusEl.className = 'connection-status ' + status;
-            statusText.textContent = text;
-        }
+            const firebaseConfig = {
+    apiKey: "AIzaSyDDkdy2Dz0s7LHSWKgBLpevPFn0FDwt9os",
+    authDomain: "habit-tracker-pk.firebaseapp.com",
+    projectId: "habit-tracker-pk",
+    storageBucket: "habit-tracker-pk.firebasestorage.app",
+    messagingSenderId: "790945841915",
+    appId: "1:790945841915:web:d9d21446d294a86d46a65e",
+    measurementId: "G-8JTCS6ZKW2"
+  };
 
         function startRealtimeSync() {
             if (!db) return;
